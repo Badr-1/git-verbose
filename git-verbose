@@ -1,0 +1,198 @@
+#!/bin/bash
+
+# git verbose init
+# git verbose add <file>
+# git verbose commit <commit_message>
+# git verbose tag <tag_name> <tag_message>
+git_file_mode() {
+        if [ -z "$1" ]; then
+                echo "No file specified"
+                return 1
+        else
+                if [[ -d $1 ]]; then
+                        echo "040000"
+                else
+                        if [[ -x $1 ]]; then
+                                echo "100755"
+                        else
+                                if [[ -f $1 ]]; then
+                                        echo "100644"
+                                else
+                                        echo "120000"
+                                fi
+                        fi
+                fi
+        fi
+}
+
+git_verbose_init() {
+        if [ -z "$1" ]; then
+                repoPath=.git
+        else
+                repoPath=$1/.git
+        fi
+        md=$(mktemp --suffix=.md)
+        dir=("objects" "refs" "refs/heads" "refs/tags")
+        files=("HEAD" "config")
+        mkdir -p $repoPath
+        for i in "${dir[@]}"; do
+                mkdir -p $repoPath/$i
+                case $i in
+                "objects")
+                        echo "Created **Git Object Database** $repoPath/$i\\" >>$md
+                        ;;
+                "refs")
+                        echo "Created **Git References** $repoPath/$i\\" >>$md
+                        ;;
+                "refs/heads")
+                        echo "Created **Git Branches** $repoPath/$i\\" >>$md
+                        ;;
+                "refs/tags")
+                        echo "Created **Git Tags** $repoPath/$i\\" >>$md
+                        ;;
+                esac
+        done
+
+        for i in "${files[@]}"; do
+                touch $repoPath/$i
+                case $i in
+                "HEAD")
+                        echo "Created **HEAD** $repoPath/$i\\" >>$md
+                        echo "ref: refs/heads/master" >$repoPath/$i
+                        ;;
+                "config")
+                        echo "Created **Config** $repoPath/$i" >>$md
+                        echo "[core]" >$repoPath/$i
+                        echo "repositoryformatversion = 0" >>$repoPath/$i
+                        echo "filemode = true" >>$repoPath/$i
+                        echo "bare = false" >>$repoPath/$i
+                        echo "logallrefupdates = true" >>$repoPath/$i
+                        ;;
+                esac
+        done
+        glow $md
+}
+
+git_add() {
+        if [ -z "$1" ]; then
+                echo "No file specified"
+                return 1
+        fi
+        md=$(mktemp --suffix=.md)
+        echo "**Adding $1 To Git Object Database**\\" >$md
+        cmd="git hash-object -w $1"
+        echo "\`$cmd\`\\" >>$md
+        output=$($cmd)
+        if [[ -n $output ]]; then echo "**Output**: $output\\" >>$md; fi
+        echo "**Object Contents**:" >>$md
+        echo -e "- [x] **Header**: blob $(wc -c <$1)" >>$md
+        echo -e "- [x] **Contents**: $(cat $1)\\" >>$md
+        echo "**Adding $1 To Git Index**\\" >>$md
+        cmd="git update-index --add --cacheinfo $(git_file_mode $1) $(git hash-object $1) $1"
+        echo "\`$cmd\`" >>$md
+        output=$($cmd)
+        if [[ -n $output ]]; then echo "**Output**: $output" >>$md; fi
+        glow $md
+}
+
+git_commit() {
+        if [[ -z "$1" ]]; then
+                echo "No commit message specified"
+                return 1
+        fi
+        md=$(mktemp --suffix=.md)
+        commit_msg=$1
+        commit_msg_file=$(mktemp)
+        echo "$commit_msg" >$commit_msg_file
+        echo "**Committing**\\" >$md
+        echo "**Making Tree from Index**\\" >>$md
+        cmd="git write-tree"
+        echo "\`$cmd\`\\" >>$md
+        output=$($cmd)
+        if [[ -n $output ]]; then echo "**Output**: $output\\" >>$md; fi
+        echo "**Creating Commit**\\" >>$md
+        cmd="git commit-tree $output -m \"$commit_msg\""
+        echo "\`$cmd\`\\" >>$md
+        cmd="git commit-tree $output -F $commit_msg_file"
+        output=$($cmd)
+        if [[ -n $output ]]; then echo "**Output**: $output\\" >>$md; fi
+        echo "**Updating HEAD**" >>$md
+        cmd="git update-ref refs/heads/master $output"
+        echo "> [!NOTE]" >>$md
+        echo "> This is equivalent to just writing $output to refs/heads/master" >>$md
+        echo "\`$cmd\`" >>$md
+        output=$($cmd)
+        if [[ -n $output ]]; then echo "**Output**: $output\\" >>$md; fi
+        glow $md
+}
+
+git_tag() {
+        if [[ -z "$1" && -z "$2" ]]; then
+                return 1
+        else
+                md=$(mktemp --suffix=.md)
+                tag_name=$1
+                tag_message=$2
+                tag_file=$(mktemp)
+                echo "object $(git rev-parse refs/heads/master)" >$tag_file
+                echo "type commit" >>$tag_file
+                echo "tag $tag_name" >>$tag_file
+                echo "tagger $(git config user.name) <$(git config user.email)> $(date +%s) $(date +%z)" >>$tag_file
+                echo "" >>$tag_file
+                echo "$tag_message" >>$tag_file
+
+                echo "**Creating Tag**\\" >$md
+                echo "**Creating Tag Object**\\" >>$md
+                echo "**Object Contents**:" >>$md
+                echo '```' >>$md
+                batcat $tag_file >>$md
+                echo '```' >>$md
+                cmd="git hash-object -w -t tag $tag_file"
+                echo "\`$cmd\`\\" >>$md
+                output=$($cmd)
+                if [[ -n $output ]]; then echo "**Output**: $output\\" >>$md; fi
+                echo "**Creating Tag Reference**" >>$md
+                cmd="git update-ref refs/tags/$tag_name $output"
+                echo "> [!NOTE]" >>$md
+                echo "> This is equivalent to just writing $output to refs/tags/$tag_name" >>$md
+                echo "\`$cmd\`" >>$md
+                output=$($cmd)
+                if [[ -n $output ]]; then echo "**Output**: $output" >>$md; fi
+                glow $md
+        fi
+}
+
+usage() {
+        echo "Usage: git verbose <command> [<args>]"
+        echo ""
+        echo "Available commands are:"
+        echo "   init     Create an empty Git repository"
+        echo "   add      Add a file to the index"
+        echo "   commit   Record changes to the repository"
+        echo "   tag      Create a tag"
+        echo ""
+}
+
+case $1 in
+"init")
+        git_verbose_init $2
+        ;;
+"add")
+        git_add $2
+        ;;
+"commit")
+        shift 1
+        git_commit "$@"
+        ;;
+"tag")
+        shift 1
+        git_tag "$@"
+        ;;
+"--help")
+        usage
+        ;;
+*)
+        usage
+        exit 1
+        ;;
+esac

@@ -26,7 +26,7 @@ $ git verbose add <file>
 
 ### commit
 ```console
-$ git verbose commit <message>
+$ git verbose commit -m <message>
 ```
 
 ### tag

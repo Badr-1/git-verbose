@@ -1,115 +1,121 @@
 #!/bin/bash
 
-# git verbose init
-# git verbose add <file>
-# git verbose commit <commit_message>
-# git verbose tag <tag_name> <tag_message>
-
-print_line() {
-    local terminal_width=$(tput cols)
-    printf '%*s\n' "$terminal_width" '' | tr ' ' '='
-}
-print_message() {
-    # Define colors with bold and semantic meaning
-    BOLD_RED='\033[1;31m'     # Error
-    BOLD_GREEN='\033[1;32m'   # Success
-    BOLD_YELLOW='\033[1;33m'  # Warning
-    BOLD_BLUE='\033[1;34m'    # Information
-    BOLD_CYAN='\033[1;36m'    # Highlight
-    BOLD_MAGENTA='\033[1;35m' # Important
-    BOLD_WHITE='\033[1;37m'   # Neutral
-    RESET='\033[0m'
-    local type=$1
-    local message=$2
-
-    case $type in
-    error)
-        echo -e "${BOLD_RED}${message}${RESET}"
-        ;;
-    success)
-        echo -e "${BOLD_GREEN}${message}${RESET}"
-        ;;
-    warning)
-        echo -e "${BOLD_YELLOW}${message}${RESET}"
-        ;;
-    info)
-        echo -e "${BOLD_BLUE}${message}${RESET}"
-        ;;
-    highlight)
-        echo -e "${BOLD_CYAN}${message}${RESET}"
-        ;;
-    important)
-        echo -e "${BOLD_MAGENTA}${message}${RESET}"
-        ;;
-    neutral)
-        echo -e "${BOLD_WHITE}${message}${RESET}"
-        ;;
-    *)
-        echo -e "${BOLD_WHITE}${message}${RESET}"
-        ;;
-    esac
-}
-
+# Define colors and styles
+bold=$(tput bold)
+reset=$(tput sgr0)
+red=$(tput setaf 1)
+green=$(tput setaf 2)
+yellow=$(tput setaf 3)
+blue=$(tput setaf 4)
+magenta=$(tput setaf 5)
+cyan=$(tput setaf 6)
+white=$(tput setaf 7)
 
 git_file_mode() {
         if [ -z "$1" ]; then
-                print_message error "No file specified"
+                echo -e "${bold}${red}Error:${reset} No file specified"
                 return 1
         else
                 if [[ -d $1 ]]; then
                         echo "040000"
+                elif [[ -x $1 ]]; then
+                        echo "100755"
+                elif [[ -f $1 ]]; then
+                        echo "100644"
                 else
-                        if [[ -x $1 ]]; then
-                                echo "100755"
-                        else
-                                if [[ -f $1 ]]; then
-                                        echo "100644"
-                                else
-                                        echo "120000"
-                                fi
-                        fi
+                        echo "120000"
                 fi
         fi
 }
 
-git_read_object(){
-        echo -e "Object Content:\n- Header:\n\t- type: $(git cat-file -t $1) # read it using git cat-file -t $1\n\t- size: $(git cat-file -s $1) # read it using git cat-file -s $1\n- Content: \n$(print_line)\n$(git cat-file -p $1) # read it using git cat-file -p $1\n$(print_line)"
+git_read_object() {
+        local object_hash=$1
+        local type=$(git cat-file -t ${object_hash:0:7})
+        local size=$(git cat-file -s ${object_hash:0:7})
+        local content=$(git cat-file -p ${object_hash:0:7} | tr -d '\0')
+        echo -e "${bold}${cyan}Object Content:${reset}"
+        echo -e "- ${bold}Header:${reset}"
+        echo -e "\t- ${bold}Type:${reset} ${bold}${green}$type${reset}"
+        echo -e "\t- ${bold}Size:${reset} ${bold}${magenta}$size${reset}"
+        case $type in
+        "tree")
+                echo -e "- ${bold}Content:${reset}"
+                while read -r mode type hash name; do
+                        echo -e "\t${bold}${green}$mode${reset}\t${reset}${bold}${magenta}$type${reset}\t${reset}${bold}${yellow}$hash${reset}\t${reset}${bold}${blue}$name${reset}"
+                done < <(git cat-file -p ${object_hash:0:7} | awk '{print $1, $2, $3, $4}')
+                ;;
+        "commit")
+                echo -e "- ${bold}Content:${reset}"
+                local tree=$(echo "$content" | grep "^tree" | awk '{print $2}')
+                local parent=$(echo "$content" | grep "^parent" | awk '{print $2}')
+                local author=$(echo "$content" | grep "^author" | cut -d' ' -f2-)
+                local committer=$(echo "$content" | grep "^committer" | cut -d' ' -f2-)
+                local message=$(echo "$content" | sed -n '/^$/,$p' | tail -n +2)
+
+                echo -e "\t${bold}Tree ${yellow}$tree${reset}"
+                if [ -n "$parent" ]; then
+                        echo -e "\t${bold}Parent ${green}$parent${reset}"
+                fi
+                echo -e "\t${bold}Author ${blue}$author${reset}"
+                echo -e "\t${bold}Committer ${magenta}$committer${reset}"
+                echo -e "\t${bold}\n${bold}${yellow}\t$message${reset}\n"
+                ;;
+        "tag")
+                echo -e "- ${bold}Tag Details:${reset}"
+                local object=$(echo "$content" | grep "^object" | awk '{print $2}')
+                local tag_type=$(echo "$content" | grep "^type" | awk '{print $2}')
+                local tag_name=$(echo "$content" | grep "^tag " | awk '{print $2}')
+                local tagger=$(echo "$content" | grep "^tagger" | cut -d' ' -f2-)
+                local message=$(echo "$content" | sed -n '/^$/,$p' | tail -n +2)
+
+                echo -e "\t${bold}Object ${yellow}$object${reset}"
+                echo -e "\t${bold}Type ${green}$tag_type${reset}"
+                echo -e "\t${bold}Name ${magenta}$tag_name${reset}"
+                echo -e "\t${bold}Tagger ${blue}$tagger${reset}"
+                echo -e "${bold}${bold}${yellow}\n\t$message${reset}"
+                ;;
+        *)
+                if [ ! -z "$content" ]; then
+                        if [[ "$content" =~ [^[:print:][:space:]] ]]; then
+                                echo -e "- ${bold}Content:${reset} ${bold}${red}Binary${reset}"
+
+                        else
+                                echo -e "- ${bold}Content:${reset}\n${bold}${yellow}$content${reset}"
+                        fi
+                else
+                        echo -e "- ${bold}Content:${reset}\n${bold}${red}Empty${reset}"
+                fi
+                ;;
+        esac
+
 }
 
-git_read_index(){
-      # Check if the current directory is a Git repository
-      if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
-      print_message error "Not inside a Git repository!"
-      exit 1
-      fi
-      print_message highlight "Reading Git index..."
-      # List all files in the index (staged files
-      git ls-files --stage | while read -r mode hash stage path; do
-      echo -e "File: $path\n\tMode: $mode\n\tHash: $hash"
-done
-
-}
-git_verbose_init() {
-        if [ -z "$1" ]; then
-                repoPath=.git
-        else
-                repoPath=$1/.git
+git_read_index() {
+        if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+                echo -e "${bold}${red}Error:${reset} Not inside a Git repository!"
+                exit 1
         fi
-        dir=("objects" "refs" "refs/heads" "refs/tags")
-        files=("HEAD" "config")
+        echo -e "${bold}${cyan}Git index:${reset}"
+        git ls-files --stage | while read -r mode hash stage path; do
+                echo -e "${bold}File:${reset} ${bold}${blue}$path${reset}"
+                echo -e "\t${bold}Mode:${reset} ${bold}${green}$mode${reset}"
+                echo -e "\t${bold}Hash:${reset} ${bold}${yellow}${hash:0:7}${reset}"
+        done
+}
+
+git_verbose_init() {
+        repoPath="${1:+$1/.git}"
+        repoPath="${repoPath:-.git}"
+        local dir=("objects" "refs" "refs/heads" "refs/tags")
+        local files=("HEAD")
+
         mkdir -p $repoPath
         for i in "${dir[@]}"; do
                 mkdir -p $repoPath/$i
                 case $i in
-                "objects")
-                        print_message info "Created Database $repoPath/$i" 
-                        ;;
-                "refs/heads")
-                        print_message info "Created Branches $repoPath/$i" 
-                        ;;
-                "refs/tags")
-                        print_message info "Created Tags $repoPath/$i" 
-                        ;;
+                "objects") echo -e "${bold}${cyan}Created Database:${reset} ${bold}$repoPath/$i${reset}" ;;
+                "refs/heads") echo -e "${bold}${cyan}Created Branches:${reset} ${bold}$repoPath/$i${reset}" ;;
+                "refs/tags") echo -e "${bold}${cyan}Created Tags:${reset} ${bold}$repoPath/$i${reset}" ;;
                 esac
         done
 
@@ -117,138 +123,122 @@ git_verbose_init() {
                 touch $repoPath/$i
                 case $i in
                 "HEAD")
-                        print_message info "Created HEAD $repoPath/$i" 
+                        echo -e "${bold}${cyan}Created HEAD:${reset} ${bold}$repoPath/$i${reset}"
                         echo "ref: refs/heads/master" >$repoPath/$i
-                        ;;
-                "config")
-                        print_message info "Created Default Configs $repoPath/$i" 
-                        echo "[core]" > $repoPath/$i
-                        echo "repositoryformatversion = 0" >>$repoPath/$i
-                        echo "filemode = true" >>$repoPath/$i
-                        echo "bare = false" >>$repoPath/$i
-                        echo "logallrefupdates = true" >>$repoPath/$i
                         ;;
                 esac
         done
 }
 
 git_add() {
-if [ -z "$1" ]; then
-    print_message error "No file specified"
-    return 1
-elif [ ! -f "$1" ]; then
-        print_message error "File Not Found"
-        return 1	      
-    fi
-    filename=$1
-    print_message highlight "Adding $filename To Git Object Database"
-    cmd="git hash-object -w $filename"
-    print_message highlight "Run: $cmd"
-    output=$($cmd)
-    if [[ -n $output ]]; then print_message success "Output: $output"; fi
-    git_read_object $output
-    print_message highlight "Adding $filename To Git Index"
-    cmd="git update-index --add --cacheinfo $(git_file_mode $filename) $(git hash-object $filename) $filename"
-    print_message highlight "Run: $cmd"
-    output=$($cmd)
-    if [[ -n $output ]]; then echo "Output: $output"; fi
-    git_read_index
+        if [ -z "$1" ]; then
+                echo -e "${bold}${red}Error:${reset} No file specified"
+                exit 1
+        elif [ ! -e "$1" ]; then
+                echo -e "${bold}${red}Error:${reset} File Not Found"
+                exit 1
+        elif [ -d "$1" ]; then
+                for file in $1/*; do
+                        git_add $file
+                done
+        else
+                local filename=$1
+                echo -e "${bold}${cyan}Adding:${reset} ${bold}${blue}$filename${reset} ${bold}to Git Object Database...${reset}"
+                local object_hash=$(git hash-object -w $filename)
+                echo -e "${bold}${cyan}Run: ${white}git ${blue}hash-object ${green}-w ${yellow}$filename${reset}"
+                echo -e "${bold}${cyan}Output:${reset} ${bold}${yellow}$object_hash${reset}"
+                git_read_object $object_hash
+                echo -e "${bold}${cyan}Adding:${reset} ${bold}${blue}$filename${reset} ${bold}to Git Index...${reset}"
+                local cmd="git update-index --add --cacheinfo $(git_file_mode $filename) $object_hash $filename"
+                echo -e "${bold}${cyan}Run: ${white}git ${blue}update-index ${green}--add --cacheinfo ${yellow}$(git_file_mode $filename) ${object_hash:0:7}~ $filename${reset}"
+                $cmd
+                git_read_index
+        fi
 }
 
 git_commit() {
         if [[ -z "$1" ]]; then
-                echo "No commit message specified"
+                echo -e "${bold}${red}Error:${reset} No commit message specified"
                 return 1
         fi
-        commit_msg=$1
-        commit_msg_file=".git/COMMIT_EDITMSG"
-        print_message highlight "Creating Tree From Index" 
-        cmd="git write-tree"
-        print_message highlight "Run: $cmd" 
-        tree=$($cmd)
-        if [[ -n $tree ]]; then print_message success "Output: $tree" ; fi
+        local commit_msg=$1
+        local commit_msg_file=".git/COMMIT_EDITMSG"
+        echo -e "${bold}${cyan}Creating Tree From Index...${reset}"
+        local tree=$(git write-tree)
+        echo -e "${bold}${cyan}Run: ${white}git ${blue}write-tree${reset}"
+        echo -e "${bold}${cyan}Output:${reset} ${bold}${yellow}$tree${reset}"
         git_read_object $tree
-        print_message highlight "Creating Commit" 
-        print_message info "Write Commit Message in $commit_msg_file"
-        echo "$commit_msg" >$commit_msg_file 
-        cmd="git commit-tree $tree -F $commit_msg_file"
-        if [[ -n $(git rev-parse HEAD &> /dev/null)  ]]; then cmd="git commit-tree $tree -p $(git rev-parse HEAD) -F $commit_msg_file"; fi 
-        commit=$($cmd)
-        print_message highlight "Run: $cmd"
-        if [[ -n $commit ]]; then print_message success "Output: $commit" ; fi
+        echo -e "${bold}${cyan}Creating Commit...${reset}"
+        echo "$commit_msg" >$commit_msg_file
+        echo -e "${bold}$commit_msg_file:\n$(cat $commit_msg_file)${reset}"
+        local cmd="git commit-tree $tree -F $commit_msg_file"
+        echo -e "${bold}${cyan}Run: ${white}git ${blue}commit-tree ${yellow}$tree ${green}-F ${yellow}$commit_msg_file${reset}"
+        if git rev-parse HEAD &>/dev/null; then
+                echo -e "${bold}${cyan}Run: ${white}git ${blue}commit-tree ${yellow}$tree ${green}-p ${yellow}$(git rev-parse HEAD)${green}-F ${yellow}$commit_msg_file${reset}"
+                cmd="git commit-tree $tree -p $(git rev-parse HEAD) -F $commit_msg_file"
+        fi
+        local commit=$($cmd)
+        echo -e "${bold}${cyan}Output:${reset} ${bold}${yellow}$commit ${red}(Disclaimer: Changes with time)${reset}"
         git_read_object $commit
-        print_message highlight "Updating HEAD" 
+        echo -e "${bold}${cyan}Updating HEAD...${reset}"
         cmd="git update-ref refs/heads/master $commit"
-        print_message highlight "Run: $cmd" 
-        print_message warning "NOTE: This is equivalent to just writing $commit to .git/refs/heads/master" 
+        echo -e "${bold}${cyan}Run: ${white}git ${blue}update-ref ${yellow}refs/heads/master${reset}"
         $cmd
+        echo -e "${bold}${cyan}Updating reference log...${reset}"
+        cat .git/logs/refs/heads/master
+        echo -e "${bold}${cyan}Updating HEAD log...${reset}"
+        cat .git/logs/HEAD
 }
 
 git_tag() {
-        if [[ -z "$1" && -z "$2" ]]; then
+        if [[ -z "$1" || -z "$2" ]]; then
+                echo -e "${bold}${red}Error:${reset} Tag name or message is missing"
                 return 1
-        else
-                tag_name=$1
-                tag_message=$2
-                tag_file=".git/$tag_name"
-                echo "object $(git rev-parse refs/heads/master)" >$tag_file
-                echo "type commit" >>$tag_file
-                echo "tag $tag_name" >>$tag_file
-                echo "tagger $(git config user.name) <$(git config user.email)> $(date +%s) $(date +%z)" >>$tag_file
-                echo "" >>$tag_file
-                echo "$tag_message" >>$tag_file
-
-                print_message highlight "Creating Tag"
-                print_message highlight "Creating Tag Object" 
-                print_message info "Object Contents:"
-                print_line 
-                cat $tag_file
-                print_line 
-                cmd="git hash-object -w -t tag $tag_file"
-                print_message highlight "Run: $cmd" 
-                tag=$($cmd)
-                if [[ -n $tag ]]; then print_message success "Output: $tag" ; fi
-                print_message highlight "Creating Tag Reference" 
-                cmd="git update-ref refs/tags/$tag_name $tag"
-                print_message highlight "Run: $cmd" 
-                print_message warning "NOTE This is equivalent to just writing $tag to .git/refs/tags/$tag_name" 
-                output=$($cmd)
-                rm $tag_file
         fi
+        local tag_name=$1
+        local tag_message=$2
+        local tag_file=".git/$tag_name"
+        echo -e "${bold}${cyan}Creating Tag:${reset} ${bold}${magenta}$tag_name${reset}"
+        echo "object $(git rev-parse refs/heads/master)" >$tag_file
+        echo "type commit" >>$tag_file
+        echo "tag $tag_name" >>$tag_file
+        echo "tagger $(git config user.name) <$(git config user.email)> $(date +%s) $(date +%z)" >>$tag_file
+        echo "" >>$tag_file
+        echo "$tag_message" >>$tag_file
+        local tag=$(git hash-object -w -t tag $tag_file)
+        echo -e "${bold}${cyan}Output:${reset} ${bold}${yellow}$tag ${red}(Disclaimer: Changes with time)${reset}"
+        echo -e "${bold}$tag_file:\n$(cat $tag_file)${reset}"
+        echo -e "${bold}${cyan}Run: ${white}git ${blue}hash-object ${green}-w -t ${yellow}tag $tag_file${reset}"
+        git update-ref refs/tags/$tag_name $tag
+        echo -e "${bold}${cyan}Run: ${white}git ${blue}update-ref ${yellow}refs/tags/$tag_name $tag${reset}"
+        rm $tag_file
+        git_read_object $tag
 }
 
 usage() {
-        echo "Usage: git verbose <command> [<args>]"
-        echo ""
-        echo "Available commands are:"
-        echo "   init     <dir-name> Create an empty Git repository"
-        echo "   add      <file-path> Add a file to the index"
-        echo "   commit   <commit-message> Record changes to the repository"
-        echo "   tag      <name> <message> Create a tag"
+        echo -e "${bold}Usage:${reset} git verbose <command> [<args>]"
+        echo -e "\n${bold}Available commands:${reset}"
+        echo -e "   ${yellow}${bold}init${reset}     <dir-name> Create an empty Git repository"
+        echo -e "   ${yellow}${bold}add${reset}      <file-path> Add a file to the index"
+        echo -e "   ${yellow}${bold}commit${reset}   -m <commit-message> Record changes to the repository"
+        echo -e "   ${yellow}${bold}tag${reset}      <name> <message> Create a tag"
         echo ""
 }
 
 case $1 in
-"init")
-        git_verbose_init $2
-        ;;
-"add")
-        git_add $2
-        ;;
+"init") git_verbose_init $2 ;;
+"add") git_add $2 ;;
 "commit")
-        shift 1
+        shift 2
         git_commit "$@"
         ;;
 "tag")
         shift 1
         git_tag "$@"
         ;;
-"--help")
-        usage
-        ;;
+"--help") usage ;;
 *)
         usage
         exit 1
         ;;
 esac
-
